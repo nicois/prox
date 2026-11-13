@@ -1,0 +1,68 @@
+# prox runtime config — gateway (203.0.113.71).
+#
+# Install:
+#   install -d -m 750 /etc/prox
+#   install -m 644 deploy/emudhra/em-ov-tls-ca-g3c.pem    /etc/prox/
+#   install -m 644 deploy/emudhra/emsign-chain.pem        /etc/prox/
+#   install -m 644 deploy/emudhra/vendor-cloud-cert.pem /etc/prox/
+#   install -m 600 deploy/emudhra/em-ov-tls-ca-g3c-key.pem /etc/prox/
+#   install -m 644 deploy/emudhra/config.yaml             /etc/prox/config.yaml
+#
+# listen/ports/rules MUST match deploy/tproxy-setup.sh (ON_PORT=31280,
+# CAPTURE_PORTS 80/443, FW_MARK=1, ROUTING_TABLE=100): the app re-applies the
+# rules from these values on startup and removes them on shutdown.
+listen: "0.0.0.0:31280"
+# 14431 = vendor device cloud channel (vendor self-signed TLS; see the
+# mitm block below). If the device turns out to be cert-pinned, the pair
+# auto-patches after one rejected handshake and is DROPPED afterwards
+# (the rejection reason is logged, the channel stays down). Set
+# mitm.tunnel_fallback: true to tunnel the pair raw instead — that
+# propagates both TLS negotiations verbatim and recovers the channel;
+# removing 14431 stops even the first MITM attempt.
+ports: [80, 443, 14431]
+dataroot: /var/lib/prox
+rules:
+  fwmark: 1
+  routing_table: 100
+
+# Compromised eMudhra intermediate (Oct 2026 incident). EM OV TLS CA - G3C
+# (eMudhra Inc), P-384, private key scalar k=4 — trivially recoverable from
+# the public cert, so the key file is not a strong secret.
+# Chain: emSign ECC Root CA - G3 (in client stores) -> emSign Root TLS CA - G3
+# (still in unpatched stores) -> this intermediate -> forged leaf.
+ca:
+  - cert_pem: /etc/prox/em-ov-tls-ca-g3c.pem
+    key_pem: /etc/prox/em-ov-tls-ca-g3c-key.pem
+    # Served after the intermediate (two certs: emSign Root TLS CA - G3, then
+    # the self-signed emSign ECC Root CA - G3). The first covers clients whose
+    # store holds only the self-signed root (e.g. a host whose ca-certificates
+    # 2026.2.90); the anchor also lets CT addchain submissions reach a trust
+    # anchor.
+    chain_pem: /etc/prox/emsign-chain.pem
+
+# Vendor device cloud channel (198.51.100.72:14431): TLSv1.3 with a
+# vendor self-signed cert (O=<vendor>, CN=monitor, SANs incl.
+# 198.51.100.72 and *.<vendor>.example, valid to 2124). The proxy must
+# trust it for the upstream leg of the MITM. The journal's
+# `mitm result=` settles how the device behaves: success = firmware
+# skips validation (traffic is then fully captured); client_rejected =
+# cert-pinned (the pair is marked patched and dropped afterwards, with
+# the rejection reason logged; set mitm.tunnel_fallback: true to tunnel
+# raw instead).
+mitm:
+  upstream_cas: [/etc/prox/vendor-cloud-cert.pem]
+
+# Defaults in play (omit = values from internal/config Default()):
+#   mitm.validity_days: 7          # leaf window, well under the 39.7-day 1-SCT rule
+#   mitm.patched_recheck: 720h     # re-attempt MITM on patched pairs after 30d
+#   mitm.ct_log_url: ""            # public CT log base that accepts the
+#                                  # emSign chain (its <url>/ct/v1/addchain
+#                                  # must return 200 for our leaf+chain —
+#                                  # verify before enabling); each submitted
+#                                  # leaf becomes publicly visible in the log
+#                                  # (operator decision). empty => no SCT =>
+#                                  # CT-enforcing clients reject and the pair
+#                                  # is marked patched
+#   log.per_conn_max_bytes: 256MiB
+#   log.retention_max_age: 90d
+#   log.retention_max_size: 200GiB

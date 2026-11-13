@@ -1,0 +1,35 @@
+# prox — transparent TLS MITM proxy (TPROXY ladder).
+#
+# Install:
+#   install -m 644 deploy/prox.service /etc/systemd/system/prox.service
+#   systemctl daemon-reload
+#   systemctl enable --now prox
+#   journalctl -u prox -f          # structured JSON operator events
+#
+# Requires root: CAP_NET_ADMIN for the TPROXY iptables rules (applied at
+# start, removed at stop) and read access to the 0600 CA key in /etc/prox.
+# Per-connection capture goes to /var/lib/prox (StateDirectory), not to the
+# journal. NOTE: firewall-cmd --reload or a reboot wipes the mangle rules —
+# restarting the unit re-applies them from /etc/prox/config.yaml.
+
+[Unit]
+Description=prox - transparent TLS proxy (TPROXY, MITM ladder)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/prox -config /etc/prox/config.yaml
+Restart=on-failure
+RestartSec=5s
+# iptables rules are removed on SIGTERM (graceful shutdown); the drain
+# force-closes in-flight connections after a short grace, so a normal stop
+# is bounded — 15s leaves headroom over the binary's 10s drain budget. If
+# the unit is killed anyway, re-run it to restore the rules.
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+StateDirectory=prox
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

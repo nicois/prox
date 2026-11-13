@@ -1,0 +1,7 @@
+/prox
+example/hooks/prox-hooks
+.worktrees/
+.superpowers/
+AGENTS.local.md
+docs/superpowers/plans/
+docs/proposals/
